@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
-      NOTION_Date_BLOCK_ID: ${{ secrets.NOTION_QUOTE_BLOCK_ID }}
+      NOTION_Date_BLOCK_ID: ${{ secrets.NOTION_DATE_BLOCK_ID }}
       TZ: "Europe/Zurich"
 
     steps:
