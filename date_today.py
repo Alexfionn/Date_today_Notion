@@ -4,7 +4,7 @@
 """
 ENV (required)
   NOTION_TOKEN
-  NOTION_QUOTE_BLOCK_ID
+  NOTION_DATE_BLOCK_ID
 """
 
 from __future__ import annotations
