@@ -33,7 +33,7 @@ def update_date_heading(block_id: str) -> None:
     today_str = datetime.date.today().strftime("%d.%m.%y")
 
     payload = {
-        "heading_2": {
+        "heading_1": {
             "rich_text": [
                 {
                     "type": "text",
