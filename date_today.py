@@ -17,7 +17,7 @@ NOTION_VERSION = "2022-06-28"
 NOTION_TOKEN = os.getenv("NOTION_TOKEN")
 BLOCK_ID = os.getenv("NOTION_DATE_BLOCK_ID")
 if not NOTION_TOKEN or not BLOCK_ID:
-    raise SystemExit("Missing NOTION_TOKEN or NOTION_QUOTE_BLOCK_ID.")
+    raise SystemExit("Missing NOTION_TOKEN or NOTION_DATE_BLOCK_ID.")
 
 def notion_headers() -> dict:
     return {
