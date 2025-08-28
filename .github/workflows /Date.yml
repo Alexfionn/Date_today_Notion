@@ -1,4 +1,4 @@
-name: Date Today→ Notion
+name: Date Today → Notion
 
 on:
   workflow_dispatch: {}
