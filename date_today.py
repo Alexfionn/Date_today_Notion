@@ -3,6 +3,7 @@
 from __future__ import annotations
 import os, json, datetime, io, base64
 import requests
+import time
 from PIL import Image, ImageDraw, ImageFont
 
 NOTION_API     = "https://api.notion.com/v1"
@@ -124,8 +125,6 @@ if __name__ == "__main__":
 
     png = generate_date_png(today)
     print(f"🖼️ Generated ({len(png)} bytes)")
-
-    import time
 
     url = upload_to_imgbb(png)
 
