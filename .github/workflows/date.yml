@@ -10,6 +10,7 @@ jobs:
     env:
       NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
       NOTION_DATE_BLOCK_ID: ${{ secrets.NOTION_DATE_BLOCK_ID }}
+      IMGBB_API_KEY: ${{ secrets.IMGBB_API_KEY }}   # ← THIS IS MISSING
       TZ: "Europe/Zurich"
     steps:
       - name: Check out repo
