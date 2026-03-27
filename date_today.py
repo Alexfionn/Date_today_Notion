@@ -13,10 +13,10 @@ import os, json, datetime, io
 import requests
 from PIL import Image, ImageDraw, ImageFont
 
-NOTION_API      = "https://api.notion.com/v1"
-NOTION_VERSION  = "2022-06-28"
-NOTION_TOKEN    = os.getenv("NOTION_TOKEN")
-BLOCK_ID        = os.getenv("NOTION_DATE_BLOCK_ID")
+NOTION_API     = "https://api.notion.com/v1"
+NOTION_VERSION = "2022-06-28"
+NOTION_TOKEN   = os.getenv("NOTION_TOKEN")
+BLOCK_ID       = os.getenv("NOTION_DATE_BLOCK_ID")
 
 if not NOTION_TOKEN or not BLOCK_ID:
     raise SystemExit("Missing NOTION_TOKEN or NOTION_DATE_BLOCK_ID.")
@@ -27,21 +27,16 @@ if not NOTION_TOKEN or not BLOCK_ID:
 def generate_date_png(
     text: str,
     font_size: int = 96,
-    font_color: tuple = (30, 30, 30, 255),   # RGBA – change alpha for transparency
+    font_color: tuple = (30, 30, 30, 255),  # RGBA
     padding: int = 20,
 ) -> bytes:
-    """
-    Render *text* onto a fully transparent PNG and return raw PNG bytes.
-    Falls back to Pillow's built-in bitmap font if no TTF is available.
-    """
-    # Try to load a nice system font; fall back to default if unavailable
-    font: ImageFont.ImageFont | ImageFont.FreeTypeFont
+    """Render *text* onto a transparent PNG canvas and return raw PNG bytes."""
     font_candidates = [
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",   # Linux
-        "/System/Library/Fonts/Helvetica.ttc",                      # macOS
-        "C:/Windows/Fonts/arialbd.ttf",                             # Windows
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",  # Ubuntu (GitHub Actions)
+        "/System/Library/Fonts/Helvetica.ttc",                    # macOS
+        "C:/Windows/Fonts/arialbd.ttf",                           # Windows
     ]
-    font = ImageFont.load_default()
+    font: ImageFont.ImageFont | ImageFont.FreeTypeFont = ImageFont.load_default()
     for path in font_candidates:
         if os.path.exists(path):
             try:
@@ -50,45 +45,65 @@ def generate_date_png(
             except Exception:
                 pass
 
-    # Measure text size using a temporary draw surface
+    # Measure text on a scratch surface
     dummy = Image.new("RGBA", (1, 1))
-    draw  = ImageDraw.Draw(dummy)
-    bbox  = draw.textbbox((0, 0), text, font=font)
-    text_w = bbox[2] - bbox[0]
-    text_h = bbox[3] - bbox[1]
+    bbox  = ImageDraw.Draw(dummy).textbbox((0, 0), text, font=font)
+    w, h  = bbox[2] - bbox[0], bbox[3] - bbox[1]
 
-    # Create a transparent canvas
-    img  = Image.new("RGBA", (text_w + padding * 2, text_h + padding * 2), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-    draw.text((padding, padding), text, font=font, fill=font_color)
+    # Draw on a fully transparent canvas
+    img  = Image.new("RGBA", (w + padding * 2, h + padding * 2), (0, 0, 0, 0))
+    ImageDraw.Draw(img).text((padding, padding), text, font=font, fill=font_color)
 
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
 
 
-# ─── Anonymous image hosting (0x0.st) ────────────────────────────────────────
+# ─── Notion native file upload ────────────────────────────────────────────────
 
-def upload_to_0x0(png_bytes: bytes, filename: str = "date.png") -> str:
+def upload_to_notion(png_bytes: bytes, filename: str = "date.png") -> str:
     """
-    Upload PNG bytes to https://0x0.st (no account needed).
-    Returns the public URL of the uploaded file.
+    Upload PNG bytes directly to Notion's file upload API.
+    Returns the file_upload_id used to reference the image in a block.
+
+    No third-party host needed — Notion stores the file itself.
     """
-    resp = requests.post(
-        "https://0x0.st",
-        files={"file": (filename, png_bytes, "image/png")},
+    auth_headers = {
+        "Authorization": f"Bearer {NOTION_TOKEN}",
+        "Notion-Version": NOTION_VERSION,
+    }
+
+    # 1. Request an upload slot
+    r = requests.post(
+        f"{NOTION_API}/file-uploads",
+        headers={**auth_headers, "Content-Type": "application/json"},
+        data=json.dumps({"filename": filename, "content_type": "image/png"}),
         timeout=15,
     )
-    resp.raise_for_status()
-    url = resp.text.strip()
-    if not url.startswith("http"):
-        raise RuntimeError(f"Unexpected response from 0x0.st: {url!r}")
-    return url
+    if r.status_code not in (200, 201):
+        raise RuntimeError(f"Failed to create Notion upload slot: {r.status_code} {r.text}")
+
+    slot           = r.json()
+    upload_url     = slot["upload_url"]
+    file_upload_id = slot["id"]
+
+    # 2. PUT the raw bytes to the pre-signed URL
+    r2 = requests.put(
+        upload_url,
+        headers={"Content-Type": "image/png"},
+        data=png_bytes,
+        timeout=30,
+    )
+    if r2.status_code not in (200, 201, 204):
+        raise RuntimeError(f"Failed to upload PNG to Notion: {r2.status_code} {r2.text}")
+
+    print(f"☁️  Uploaded to Notion (file_upload_id: {file_upload_id})")
+    return file_upload_id
 
 
 # ─── Notion block update ──────────────────────────────────────────────────────
 
-def notion_headers() -> dict:
+def _notion_headers() -> dict:
     return {
         "Authorization": f"Bearer {NOTION_TOKEN}",
         "Notion-Version": NOTION_VERSION,
@@ -96,70 +111,52 @@ def notion_headers() -> dict:
     }
 
 
-def update_block_with_image(block_id: str, image_url: str) -> None:
-    """
-    Patch a Notion block to be an 'image' block pointing at *image_url*.
-
-    Note: the existing block type must match, OR you delete + re-append.
-    The safest approach is to update the parent page's children list;
-    here we PATCH the block directly (works if it was already an image block)
-    and fall back to delete + append otherwise.
-    """
-    payload = {
+def _image_payload(file_upload_id: str) -> dict:
+    return {
         "type": "image",
         "image": {
-            "type": "external",
-            "external": {"url": image_url},
+            "type": "file_upload",
+            "file_upload": {"id": file_upload_id},
         },
     }
-    url = f"{NOTION_API}/blocks/{block_id}"
-    r = requests.patch(url, headers=notion_headers(), data=json.dumps(payload))
 
+
+def update_block_with_image(block_id: str, file_upload_id: str) -> None:
+    """
+    PATCH the target block to display the uploaded image.
+    If the block type doesn't support patching (e.g. it's a heading),
+    falls back to deleting it and appending a fresh image block to the parent.
+    """
+    r = requests.patch(
+        f"{NOTION_API}/blocks/{block_id}",
+        headers=_notion_headers(),
+        data=json.dumps(_image_payload(file_upload_id)),
+    )
     if r.status_code in (200, 201):
-        print("✅ Block patched as image block.")
+        print("✅ Block updated with new image.")
         return
 
-    # If patching fails (e.g. block type mismatch), fall back:
-    # delete the old block and append a new image block to its parent.
-    print(f"⚠️  PATCH returned {r.status_code}; trying delete + append …")
-    _delete_and_append_image(block_id, image_url)
+    print(f"⚠️  PATCH returned {r.status_code} — falling back to delete + append …")
 
+    # Retrieve parent, delete old block, append new one
+    info   = requests.get(f"{NOTION_API}/blocks/{block_id}", headers=_notion_headers())
+    info.raise_for_status()
+    parent = info.json().get("parent", {})
 
-def _delete_and_append_image(block_id: str, image_url: str) -> None:
-    """Delete the old block and append a fresh image block to its parent."""
-    # 1. Retrieve parent info
-    r = requests.get(f"{NOTION_API}/blocks/{block_id}", headers=notion_headers())
-    r.raise_for_status()
-    block_data = r.json()
-    parent = block_data.get("parent", {})
+    requests.delete(f"{NOTION_API}/blocks/{block_id}", headers=_notion_headers())
 
-    # 2. Delete old block
-    requests.delete(f"{NOTION_API}/blocks/{block_id}", headers=notion_headers())
-
-    # 3. Append image to parent
     parent_id = parent.get("page_id") or parent.get("block_id")
     if not parent_id:
         raise RuntimeError("Could not determine parent ID to re-append block.")
 
-    append_payload = {
-        "children": [
-            {
-                "type": "image",
-                "image": {
-                    "type": "external",
-                    "external": {"url": image_url},
-                },
-            }
-        ]
-    }
     r2 = requests.patch(
         f"{NOTION_API}/blocks/{parent_id}/children",
-        headers=notion_headers(),
-        data=json.dumps(append_payload),
+        headers=_notion_headers(),
+        data=json.dumps({"children": [_image_payload(file_upload_id)]}),
     )
     if r2.status_code not in (200, 201):
         raise RuntimeError(f"Failed to append image block: {r2.status_code} {r2.text}")
-    print("✅ Old block deleted and new image block appended.")
+    print("✅ Old block deleted and fresh image block appended.")
 
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
@@ -171,8 +168,7 @@ if __name__ == "__main__":
     png_bytes = generate_date_png(today_str)
     print(f"🖼️  PNG generated ({len(png_bytes):,} bytes)")
 
-    print("⬆️  Uploading to 0x0.st …")
-    image_url = upload_to_0x0(png_bytes, filename=f"{today_str}.png")
-    print(f"🔗 Image URL: {image_url}")
+    print("⬆️  Uploading to Notion …")
+    file_upload_id = upload_to_notion(png_bytes, filename=f"{today_str}.png")
 
-    update_block_with_image(BLOCK_ID, image_url)
+    update_block_with_image(BLOCK_ID, file_upload_id)
