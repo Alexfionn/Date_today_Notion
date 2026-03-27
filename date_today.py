@@ -19,7 +19,7 @@ if not NOTION_TOKEN or not BLOCK_ID or not IMGBB_API_KEY:
 # ─── Image generation ────────────────────────────────────────────────────────
 
 def load_font(size=96):
-    custom_font = "fonts/plant.otf"  # ✅ FIXED
+    custom_font = "fonts/plant.ttf"  # ✅ FIXED
 
     if os.path.exists(custom_font):
         return ImageFont.truetype(custom_font, size)
