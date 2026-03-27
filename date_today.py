@@ -1,13 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-ENV (required)
-  NOTION_TOKEN          – Notion integration token
-  NOTION_DATE_BLOCK_ID  – ID of the block to replace with the date image
-
-Dependencies:
-  pip install requests pillow
-"""
 from __future__ import annotations
 import os, json, datetime, io
 import requests
@@ -27,16 +19,15 @@ if not NOTION_TOKEN or not BLOCK_ID:
 def generate_date_png(
     text: str,
     font_size: int = 96,
-    font_color: tuple = (30, 30, 30, 255),  # RGBA
+    font_color: tuple = (30, 30, 30, 255),
     padding: int = 20,
 ) -> bytes:
-    """Render *text* onto a transparent PNG canvas and return raw PNG bytes."""
     font_candidates = [
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",  # Ubuntu (GitHub Actions)
-        "/System/Library/Fonts/Helvetica.ttc",                    # macOS
-        "C:/Windows/Fonts/arialbd.ttf",                           # Windows
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/System/Library/Fonts/Helvetica.ttc",
+        "C:/Windows/Fonts/arialbd.ttf",
     ]
-    font: ImageFont.ImageFont | ImageFont.FreeTypeFont = ImageFont.load_default()
+    font = ImageFont.load_default()
     for path in font_candidates:
         if os.path.exists(path):
             try:
@@ -45,12 +36,10 @@ def generate_date_png(
             except Exception:
                 pass
 
-    # Measure text on a scratch surface
     dummy = Image.new("RGBA", (1, 1))
     bbox  = ImageDraw.Draw(dummy).textbbox((0, 0), text, font=font)
     w, h  = bbox[2] - bbox[0], bbox[3] - bbox[1]
 
-    # Draw on a fully transparent canvas
     img  = Image.new("RGBA", (w + padding * 2, h + padding * 2), (0, 0, 0, 0))
     ImageDraw.Draw(img).text((padding, padding), text, font=font, fill=font_color)
 
@@ -62,20 +51,14 @@ def generate_date_png(
 # ─── Notion native file upload ────────────────────────────────────────────────
 
 def upload_to_notion(png_bytes: bytes, filename: str = "date.png") -> str:
-    """
-    Upload PNG bytes directly to Notion's file upload API.
-    Returns the file_upload_id used to reference the image in a block.
-
-    No third-party host needed — Notion stores the file itself.
-    """
     auth_headers = {
         "Authorization": f"Bearer {NOTION_TOKEN}",
         "Notion-Version": NOTION_VERSION,
     }
 
-    # 1. Request an upload slot
+    # ✅ FIXED ENDPOINT HERE
     r = requests.post(
-        f"{NOTION_API}/file-uploads",
+        f"{NOTION_API}/file_uploads",
         headers={**auth_headers, "Content-Type": "application/json"},
         data=json.dumps({"filename": filename, "content_type": "image/png"}),
         timeout=15,
@@ -87,7 +70,6 @@ def upload_to_notion(png_bytes: bytes, filename: str = "date.png") -> str:
     upload_url     = slot["upload_url"]
     file_upload_id = slot["id"]
 
-    # 2. PUT the raw bytes to the pre-signed URL
     r2 = requests.put(
         upload_url,
         headers={"Content-Type": "image/png"},
@@ -97,7 +79,7 @@ def upload_to_notion(png_bytes: bytes, filename: str = "date.png") -> str:
     if r2.status_code not in (200, 201, 204):
         raise RuntimeError(f"Failed to upload PNG to Notion: {r2.status_code} {r2.text}")
 
-    print(f"☁️  Uploaded to Notion (file_upload_id: {file_upload_id})")
+    print(f"☁️ Uploaded to Notion (file_upload_id: {file_upload_id})")
     return file_upload_id
 
 
@@ -122,11 +104,6 @@ def _image_payload(file_upload_id: str) -> dict:
 
 
 def update_block_with_image(block_id: str, file_upload_id: str) -> None:
-    """
-    PATCH the target block to display the uploaded image.
-    If the block type doesn't support patching (e.g. it's a heading),
-    falls back to deleting it and appending a fresh image block to the parent.
-    """
     r = requests.patch(
         f"{NOTION_API}/blocks/{block_id}",
         headers=_notion_headers(),
@@ -136,9 +113,8 @@ def update_block_with_image(block_id: str, file_upload_id: str) -> None:
         print("✅ Block updated with new image.")
         return
 
-    print(f"⚠️  PATCH returned {r.status_code} — falling back to delete + append …")
+    print(f"⚠️ PATCH returned {r.status_code} — falling back to delete + append …")
 
-    # Retrieve parent, delete old block, append new one
     info   = requests.get(f"{NOTION_API}/blocks/{block_id}", headers=_notion_headers())
     info.raise_for_status()
     parent = info.json().get("parent", {})
@@ -156,6 +132,7 @@ def update_block_with_image(block_id: str, file_upload_id: str) -> None:
     )
     if r2.status_code not in (200, 201):
         raise RuntimeError(f"Failed to append image block: {r2.status_code} {r2.text}")
+
     print("✅ Old block deleted and fresh image block appended.")
 
 
@@ -166,9 +143,9 @@ if __name__ == "__main__":
     print(f"📅 Generating PNG for: {today_str}")
 
     png_bytes = generate_date_png(today_str)
-    print(f"🖼️  PNG generated ({len(png_bytes):,} bytes)")
+    print(f"🖼️ PNG generated ({len(png_bytes):,} bytes)")
 
-    print("⬆️  Uploading to Notion …")
+    print("⬆️ Uploading to Notion …")
     file_upload_id = upload_to_notion(png_bytes, filename=f"{today_str}.png")
 
     update_block_with_image(BLOCK_ID, file_upload_id)
