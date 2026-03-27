@@ -125,6 +125,13 @@ if __name__ == "__main__":
     png = generate_date_png(today)
     print(f"🖼️ Generated ({len(png)} bytes)")
 
+    import time
+
     url = upload_to_imgbb(png)
+
+    print("⏳ Waiting for CDN...")
+    time.sleep(5)  # wait 5 seconds
+
+update_block(BLOCK_ID, url)
 
     update_block(BLOCK_ID, url)
