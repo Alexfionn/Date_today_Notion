@@ -131,6 +131,4 @@ if __name__ == "__main__":
     print("⏳ Waiting for CDN...")
     time.sleep(5)  # wait 5 seconds
 
-update_block(BLOCK_ID, url)
-
     update_block(BLOCK_ID, url)
