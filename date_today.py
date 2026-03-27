@@ -33,12 +33,31 @@ def generate_date_png(text: str) -> bytes:
     font = load_font(96)
 
     dummy = Image.new("RGBA", (1, 1))
-    bbox = ImageDraw.Draw(dummy).textbbox((0, 0), text, font=font)
-    w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    draw = ImageDraw.Draw(dummy)
 
-    img = Image.new("RGBA", (w + 40, h + 40), (0, 0, 0, 0))
+    bbox = draw.textbbox((0, 0), text, font=font)
+    x0, y0, x1, y1 = bbox
 
-    ImageDraw.Draw(img).text((20, 20), text, font=font, fill=(255, 255, 255, 255))
+    w = x1 - x0
+    h = y1 - y0
+
+    padding = 40
+
+    img = Image.new(
+        "RGBA",
+        (w + padding, h + padding),
+        (0, 0, 0, 0),
+    )
+
+    draw = ImageDraw.Draw(img)
+
+    # key fix: compensate for bbox baseline offset
+    draw.text(
+        (padding // 2, padding // 2 - y0),
+        text,
+        font=font,
+        fill=(255, 255, 255, 255),
+    )
 
     buf = io.BytesIO()
     img.save(buf, format="PNG")
