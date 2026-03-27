@@ -1,5 +1,4 @@
 name: Date Today → Notion
-
 on:
   workflow_dispatch: {}
   schedule:
@@ -12,7 +11,6 @@ jobs:
       NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
       NOTION_DATE_BLOCK_ID: ${{ secrets.NOTION_DATE_BLOCK_ID }}
       TZ: "Europe/Zurich"
-
     steps:
       - name: Check out repo
         uses: actions/checkout@v4
@@ -23,9 +21,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
+        run: pip install requests pillow
 
-      - name: Update Notion block with today's quote
-        run: |
-          python date_today.py
+      - name: Update Notion block with today's date
+        run: python date_today.py
