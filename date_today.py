@@ -1,17 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from __future__ import annotations
-import os, json, datetime, io, base64
+import os, json, datetime, io, base64, time
 import requests
-import time
 from PIL import Image, ImageDraw, ImageFont
 
 NOTION_API     = "https://api.notion.com/v1"
 NOTION_VERSION = "2022-06-28"
+
 NOTION_TOKEN   = os.getenv("NOTION_TOKEN")
 BLOCK_ID       = os.getenv("NOTION_DATE_BLOCK_ID")
-
-# 👉 add this secret in GitHub
 IMGBB_API_KEY  = os.getenv("IMGBB_API_KEY")
 
 if not NOTION_TOKEN or not BLOCK_ID or not IMGBB_API_KEY:
@@ -20,28 +18,31 @@ if not NOTION_TOKEN or not BLOCK_ID or not IMGBB_API_KEY:
 
 # ─── Image generation ────────────────────────────────────────────────────────
 
-def generate_date_png(text: str) -> bytes:
-    font_candidates = [
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        "/System/Library/Fonts/Helvetica.ttc",
-        "C:/Windows/Fonts/arialbd.ttf",
-    ]
+def load_font(size=96):
+    # 👇 put your custom font file in repo, e.g. fonts/plant.ttf
+    custom_font = "fonts/plant.ttf"
 
-    font = ImageFont.load_default()
-    for path in font_candidates:
-        if os.path.exists(path):
-            try:
-                font = ImageFont.truetype(path, 96)
-                break
-            except:
-                pass
+    if os.path.exists(custom_font):
+        return ImageFont.truetype(custom_font, size)
+
+    # fallback
+    return ImageFont.truetype(
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", size
+    )
+
+
+def generate_date_png(text: str) -> bytes:
+    font = load_font(96)
 
     dummy = Image.new("RGBA", (1, 1))
     bbox = ImageDraw.Draw(dummy).textbbox((0, 0), text, font=font)
     w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
 
+    # transparent background
     img = Image.new("RGBA", (w + 40, h + 40), (0, 0, 0, 0))
-    ImageDraw.Draw(img).text((20, 20), text, font=font, fill=(30, 30, 30, 255))
+
+    # ✅ WHITE TEXT
+    ImageDraw.Draw(img).text((20, 20), text, font=font, fill=(255, 255, 255, 255))
 
     buf = io.BytesIO()
     img.save(buf, format="PNG")
@@ -64,11 +65,11 @@ def upload_to_imgbb(png_bytes: bytes) -> str:
     r.raise_for_status()
 
     url = r.json()["data"]["url"]
-    print(f"☁️ Uploaded to imgbb: {url}")
+    print(f"☁️ Uploaded: {url}")
     return url
 
 
-# ─── Notion update ───────────────────────────────────────────────────────────
+# ─── Notion helpers ──────────────────────────────────────────────────────────
 
 def notion_headers():
     return {
@@ -78,43 +79,44 @@ def notion_headers():
     }
 
 
-def update_block(block_id: str, image_url: str):
-    payload = {
+def create_image_block(url: str):
+    return {
         "type": "image",
         "image": {
             "type": "external",
-            "external": {"url": image_url},
+            "external": {"url": url},
         },
     }
 
-    r = requests.patch(
-        f"{NOTION_API}/blocks/{block_id}",
-        headers=notion_headers(),
-        data=json.dumps(payload),
-    )
 
-    if r.status_code in (200, 201):
-        print("✅ Block updated")
-        return
+# ─── Replace block (FIXED) ───────────────────────────────────────────────────
 
-    print("⚠️ Fallback: recreate block")
+def replace_block(block_id: str, image_url: str):
+    headers = notion_headers()
 
-    info = requests.get(f"{NOTION_API}/blocks/{block_id}", headers=notion_headers())
+    # 1. get parent + position
+    info = requests.get(f"{NOTION_API}/blocks/{block_id}", headers=headers)
     info.raise_for_status()
     parent = info.json()["parent"]
 
-    requests.delete(f"{NOTION_API}/blocks/{block_id}", headers=notion_headers())
-
     parent_id = parent.get("page_id") or parent.get("block_id")
+    if not parent_id:
+        raise RuntimeError("No parent found")
 
-    r2 = requests.patch(
+    # 2. delete old block FIRST
+    requests.delete(f"{NOTION_API}/blocks/{block_id}", headers=headers)
+
+    # 3. insert new block at top (cleanest deterministic behavior)
+    r = requests.patch(
         f"{NOTION_API}/blocks/{parent_id}/children",
-        headers=notion_headers(),
-        data=json.dumps({"children": [payload]}),
+        headers=headers,
+        data=json.dumps({
+            "children": [create_image_block(image_url)]
+        }),
     )
-    r2.raise_for_status()
+    r.raise_for_status()
 
-    print("✅ Recreated block with image")
+    print("✅ Old block removed, new one inserted")
 
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
@@ -129,6 +131,6 @@ if __name__ == "__main__":
     url = upload_to_imgbb(png)
 
     print("⏳ Waiting for CDN...")
-    time.sleep(5)  # wait 5 seconds
+    time.sleep(5)
 
-    update_block(BLOCK_ID, url)
+    replace_block(BLOCK_ID, url)
